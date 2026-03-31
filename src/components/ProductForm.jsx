@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { collection, addDoc, doc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, doc, updateDoc, serverTimestamp, query, where, getDocs } from "firebase/firestore";
 import { db } from "../firebase/config";
 import BarcodeDisplay from "./BarcodeDisplay";
 import toast from "react-hot-toast";
-import { Save, RotateCcw, Loader2 } from "lucide-react";
+import { Save, RotateCcw, Loader2, Barcode } from "lucide-react";
 
 export default function ProductForm({ editProduct = null, onComplete }) {
   const [name, setName] = useState("");
@@ -21,12 +21,10 @@ export default function ProductForm({ editProduct = null, onComplete }) {
       setPrice(String(editProduct.price ?? ""));
       setQuantity(String(editProduct.quantity ?? ""));
       setBarcode(editProduct.barcode || "");
-    } else {
-      generateBarcode();
     }
   }, [editProduct]);
 
-  // Generate a 12-digit numeric barcode from UUID
+  // Generate a 12-digit numeric barcode from UUID (fallback option)
   const generateBarcode = () => {
     const uuid = uuidv4().replace(/-/g, "");
     const numericCode = uuid
@@ -41,24 +39,44 @@ export default function ProductForm({ editProduct = null, onComplete }) {
     setName("");
     setPrice("");
     setQuantity("");
-    generateBarcode();
+    setBarcode("");
+  };
+
+  // Check if barcode already exists in Firestore
+  const checkDuplicateBarcode = async (barcodeValue) => {
+    const q = query(collection(db, "products"), where("barcode", "==", barcodeValue));
+    const snapshot = await getDocs(q);
+    // In edit mode, ignore the current product itself
+    if (isEditMode) {
+      return snapshot.docs.some((d) => d.id !== editProduct.id);
+    }
+    return !snapshot.empty;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!name.trim()) return toast.error("Product name is required");
+    if (!barcode.trim()) return toast.error("Barcode is required");
     if (!price || Number(price) <= 0) return toast.error("Enter a valid price");
     if (!quantity || Number(quantity) < 0) return toast.error("Enter a valid quantity");
 
     setSaving(true);
 
     try {
+      // Check for duplicate barcode
+      const isDuplicate = await checkDuplicateBarcode(barcode.trim());
+      if (isDuplicate) {
+        toast.error("This barcode already exists! Use a different one.");
+        setSaving(false);
+        return;
+      }
+
       const productData = {
         name: name.trim(),
         price: parseFloat(price),
         quantity: parseInt(quantity, 10),
-        barcode,
+        barcode: barcode.trim(),
       };
 
       if (isEditMode) {
@@ -85,28 +103,58 @@ export default function ProductForm({ editProduct = null, onComplete }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Barcode Preview */}
-      <div className="p-3 rounded-lg bg-zinc-50 border border-border">
-        <p className="text-[10px] font-medium text-text-muted uppercase tracking-wider mb-2">
-          Barcode Preview
-        </p>
-        <BarcodeDisplay value={barcode} height={55} />
-        <div className="mt-2 flex items-center justify-between">
-          <code className="text-xs font-mono text-text-secondary">
-            {barcode}
-          </code>
-          {!isEditMode && (
-            <button
-              type="button"
-              onClick={generateBarcode}
-              className="flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 font-medium"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Regenerate
-            </button>
-          )}
+      {/* Barcode Input */}
+      <div>
+        <label className="block text-sm font-medium text-text-primary mb-1.5">
+          <span className="flex items-center gap-1.5">
+            <Barcode className="w-4 h-4 text-primary-500" />
+            Product Barcode
+          </span>
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+            placeholder="Enter your product barcode (e.g. 8901030793585)"
+            className="flex-1 px-3 py-2.5 rounded-lg border border-border bg-white text-sm
+                       font-mono tracking-wide
+                       placeholder:text-text-muted placeholder:font-sans placeholder:tracking-normal
+                       focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-400
+                       transition-colors"
+          />
+          <button
+            type="button"
+            onClick={generateBarcode}
+            title="Auto-generate barcode"
+            className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-border
+                       text-xs font-medium text-text-muted hover:text-primary-600
+                       hover:border-primary-300 hover:bg-primary-50/50
+                       transition-colors duration-150 whitespace-nowrap"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Auto
+          </button>
         </div>
+        <p className="text-[11px] text-text-muted mt-1.5">
+          Enter your own barcode or click "Auto" to generate one
+        </p>
       </div>
+
+      {/* Barcode Preview */}
+      {barcode.trim() && (
+        <div className="p-3 rounded-lg bg-zinc-50 border border-border">
+          <p className="text-[10px] font-medium text-text-muted uppercase tracking-wider mb-2">
+            Barcode Preview
+          </p>
+          <BarcodeDisplay value={barcode.trim()} height={55} />
+          <div className="mt-2 flex items-center justify-center">
+            <code className="text-xs font-mono text-text-secondary">
+              {barcode}
+            </code>
+          </div>
+        </div>
+      )}
 
       {/* Product Name */}
       <div>
